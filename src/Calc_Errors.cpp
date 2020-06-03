@@ -13,7 +13,7 @@ int findValid(const std::vector<std::vector<double>> &vec, int index);
 
 int main(int argc, char **argv) {
     //Open the CSV file
-    std::ifstream file("/home/aaron/Documents/traj_bags/global_path_1.csv");
+    std::ifstream file("src/trajectory_error/field_files/global_path_1.csv");
     if (!file.is_open()) {
         std::cout << "Could not open CSV File" << std::endl;
         return 1;
@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
 
     //Open the .bag file
     rosbag::Bag bag;
-    bag.open("/home/aaron/Documents/traj_bags/nav_test_1.bag");
+    bag.open("src/trajectory_error/field_files/nav_test_1.bag");
     rosbag::View viewer(bag);
 
     //Loop through the bag file and copy some contents to a vector
