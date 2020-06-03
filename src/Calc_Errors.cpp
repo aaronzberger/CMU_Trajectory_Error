@@ -110,15 +110,14 @@ int main(int argc, char **argv) {
     }
 
     //Print means and vectors
-    std::cout.precision(20);
     for (auto vec : errorVec) {
-        std::cout << "Time: [" << vec.at(0) << "], Pos Error: [" << vec.at(1) << "], Orient Error: [" << vec.at(2) << "]" << std::endl;
+        std::cout << boost::format("Time: [%.15f], Position Error: [%.15f], Orientation Error: [%.15f]") 
+            % vec.at(0) % vec.at(1) % vec.at(2) << std::endl;
     }
-    
-    std::cout << "Position Error Mean: [" << positionErrorTotal / totalEntries << "]" << std::endl;
-    std::cout << "Position Error Mean: [" << orientationErrorTotal / totalEntries << "]" << std::endl;
-    std::cout << "Total Entries: " << totalEntries << ", " << 
-        csvVec.size() - 1 - totalEntries << " entries were not found" <<std::endl;
+    std::cout << boost::format("Position Error Mean: [%.5f]") % (positionErrorTotal / totalEntries) << std::endl;
+    std::cout << boost::format("Position Error Mean: [%.5f]") % (orientationErrorTotal / totalEntries) << std::endl;
+    std::cout << boost::format("Total Entries: %d, %d entries were not in the bag file")
+        % totalEntries % (csvVec.size() - 1 - totalEntries) << std::endl;
 }
 
 unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
