@@ -8,8 +8,8 @@
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_datatypes.h"
 
-int closest(const std::vector<std::vector<double>> &vec, double val);
-int findValid(const std::vector<std::vector<double>> &vec, int index);
+unsigned closest(const std::vector<std::vector<double>> &vec, double val);
+unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index);
 
 int main(int argc, char **argv) {
     //Open the CSV file
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     }
     bag.close();
 
-    int bagSize {viewer.size()};
+    unsigned bagSize {viewer.size()};
 
     double positionErrorTotal{0};
     double orientationErrorTotal{0};
@@ -90,14 +90,14 @@ int main(int argc, char **argv) {
 
     //Loop through csv Vector and find corresponding bag entries. Calculate error and add to error Vector
     for (auto csvMsg : csvVec) {
-        double bagMsg{closest(bagVec, csvMsg.at(0))};        
-        if (bagVec.at(bagMsg).at(0) == csvMsg.at(0)) {
-            double positionError{pow((csvMsg.at(1) - bagVec.at(bagMsg).at(1)), 2) + pow((csvMsg.at(2) - bagVec.at(bagMsg).at(2)), 2)};
-            double orientationError{abs(csvMsg.at(3) - bagVec.at(bagMsg).at(3))};
+        unsigned bagMsgIndex{closest(bagVec, csvMsg.at(0))};        
+        if (bagVec.at(bagMsgIndex).at(0) == csvMsg.at(0)) {
+            double positionError{pow((csvMsg.at(1) - bagVec.at(bagMsgIndex).at(1)), 2) + pow((csvMsg.at(2) - bagVec.at(bagMsgIndex).at(2)), 2)};
+            double orientationError{abs(csvMsg.at(3) - bagVec.at(bagMsgIndex).at(3))};
 
             std::vector<double> instance;
 
-            instance.push_back(bagVec.at(bagMsg).at(0));
+            instance.push_back(bagVec.at(bagMsgIndex).at(0));
             instance.push_back(positionError);
             instance.push_back(orientationError);
 
@@ -119,19 +119,15 @@ int main(int argc, char **argv) {
     std::cout << "Position Error Mean: [" << orientationErrorTotal / totalEntries << "]" << std::endl;
     std::cout << "Total Entries: " << totalEntries << ", " << 
         csvVec.size() - 1 - totalEntries << " entries were not found" <<std::endl;
-
-    // for(int i {0}; i < 2000; i++) {
-    //     std::cout << "Time Stamp: [" << bagVec.at(i).at(0) << "], Yaw Calculated: [" << bagVec.at(i).at(3) << "].\n";
-    // }
 }
 
-int closest(const std::vector<std::vector<double>> &vec, double val) {
+unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
     if (val <= vec.at(0).at(0))
         return findValid(vec, 0);
     if (val >= vec.at(vec.size() - 1).at(0))
         return findValid(vec, vec.size() - 1);
 
-    int i = 0, j = vec.size() - 1, mid = 0;
+    unsigned i = 0, j = vec.size() - 1, mid = 0;
     while (i < j) {
         mid = (i + j) / 2;
         if (vec.at(mid).at(0) == val)
@@ -146,13 +142,16 @@ int closest(const std::vector<std::vector<double>> &vec, double val) {
     return findValid(vec, mid);
 }
 
-int findValid(const std::vector<std::vector<double>> &vec, int index) {
+unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index) {
     if(!isnan(vec.at(index).at(3))) {
         return index;
     }
-    for(int i{index - 5}; i < index + 5; i++) {
-        if(i != index && (!isnan(vec.at(i).at(3))) && (vec.at(index).at(0) == vec.at(i).at(0))) {
-            return i;
+    if(index >= 5 && index <= vec.size() - 6) {
+        for(unsigned i{index - 5}; i < index + 5; i++) {
+            if(i != index && (!isnan(vec.at(i).at(3))) && (vec.at(index).at(0) == vec.at(i).at(0))) {
+                return i;
+            }
         }
     }
+    return index;
 }
