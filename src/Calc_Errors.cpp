@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
 
     //Loop through csv Vector and find corresponding bag entries. Calculate error and add to error Vector
     for (auto csvMsg : csvVec) {
-        unsigned bagMsgIndex{closest(bagVec, csvMsg.at(0))};        
+        unsigned bagMsgIndex{closest(bagVec, csvMsg.at(0))};       
         if (bagVec.at(bagMsgIndex).at(0) == csvMsg.at(0)) {
             double positionError{pow((csvMsg.at(1) - bagVec.at(bagMsgIndex).at(1)), 2) + pow((csvMsg.at(2) - bagVec.at(bagMsgIndex).at(2)), 2)};
             double orientationError{abs(csvMsg.at(3) - bagVec.at(bagMsgIndex).at(3))};
@@ -109,15 +109,94 @@ int main(int argc, char **argv) {
         }
     }
 
-    //Print means and vectors
+    double positionErrorMean {positionErrorTotal / totalEntries};
+    double orientationErrorMean {orientationErrorTotal / totalEntries};
+
+    double positionErrorSum {0};
+    double orientationErrorSum {0};
+    for(int i {0}; i < errorVec.size(); i++) {
+        positionErrorSum += pow(errorVec.at(i).at(1), 2);
+        orientationErrorSum += pow(errorVec.at(i).at(2), 2);
+    }
+    positionErrorSum /= errorVec.size() - 1;
+    orientationErrorSum /= errorVec.size() - 1;
+    double positionErrorSD {sqrt(positionErrorSum)};
+    double orientationErrorSD {sqrt(orientationErrorSum)};
+
+    //Construst a vector to store outliers
+    //The first int is index in the errorVec, the second identifies which value is the outler
+    //0:position, 1:orientation, 2:both
+    std::vector<std::vector<int>> outliers;
+
+    double positionErrorMeanOutliers {0};
+    int positionErrorMeanCount {0};
+    double orientationErrorMeanOutliers {0};
+    int orientationErrorMeanCount {0};
+
+    for(int i {0}; i < errorVec.size(); i++) {
+        double positionErrorZScore {(errorVec.at(i).at(1) - positionErrorMean) / positionErrorSD};
+        double orientationErrorZScore {(errorVec.at(i).at(2) - orientationErrorMean) / orientationErrorSD};
+
+        if(abs(positionErrorZScore) > 3 || abs(orientationErrorZScore) > 3) {
+            std::vector<int> instance;
+            instance.push_back(i);
+            if(abs(positionErrorZScore) > 3 && abs(orientationErrorZScore) > 3) {
+                instance.push_back(2);
+            } else if(abs(positionErrorZScore) > 3) {
+                instance.push_back(0);
+                orientationErrorMeanCount++;
+                orientationErrorMeanOutliers += errorVec.at(i).at(2);
+            } else {
+                instance.push_back(1);
+                positionErrorMeanCount++;
+                positionErrorMeanOutliers += errorVec.at(i).at(1);
+            }
+            outliers.push_back(instance);
+        } else {
+            positionErrorMeanCount++;
+            orientationErrorMeanCount++;
+            positionErrorMeanOutliers += errorVec.at(i).at(1);
+            orientationErrorMeanOutliers += errorVec.at(i).at(2);
+        }
+    }
+
+    positionErrorMeanOutliers /= positionErrorMeanCount;
+    orientationErrorMeanOutliers /= orientationErrorMeanCount;
+
+    //Print data
+    //Individual Entries
+    std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
+    std::cout << "INDIVIDUAL ENTRIES\n" << std::endl;
     for (auto vec : errorVec) {
         std::cout << boost::format("Time: [%.15f], Position Error: [%.15f], Orientation Error: [%.15f]") 
             % vec.at(0) % vec.at(1) % vec.at(2) << std::endl;
     }
-    std::cout << boost::format("Position Error Mean: [%.5f]") % (positionErrorTotal / totalEntries) << std::endl;
-    std::cout << boost::format("Position Error Mean: [%.5f]") % (orientationErrorTotal / totalEntries) << std::endl;
-    std::cout << boost::format("Total Entries: %d, %d entries were not in the bag file")
+    //Outliers
+    std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
+    std::cout << "OUTLIERS\n" << std::endl;
+
+    for(auto vec: outliers) {
+        std::cout << boost::format("Stamp: [%.15f], ") % errorVec.at(vec.at(0)).at(0);
+        if(vec.at(1) == 0 || vec.at(1) == 2) {
+            std::cout << boost::format("Position Error: [%.15f]") % errorVec.at(vec.at(0)).at(1);
+        }
+        if(vec.at(1) == 1 || vec.at(1) == 2) {
+            std::cout << boost::format("Orientation Error: [%.15f]") % errorVec.at(vec.at(0)).at(2);
+        }
+        std::cout << std::endl;
+    }
+    //Analysis
+    std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
+    std::cout << "ANALYSIS\n" << std::endl;
+    std::cout << boost::format("Total Entries: %d, %d entries were not in the bag file\n")
         % totalEntries % (csvVec.size() - 1 - totalEntries) << std::endl;
+    std::cout << "Counting Outliers:" << std::endl;
+    std::cout << boost::format("Position Error Mean: [%.5f]") % positionErrorMean << std::endl;
+    std::cout << boost::format("Orientation Error Mean: [%.5f]\n") % orientationErrorMean << std::endl;
+
+    std::cout << "Not Counting Outliers:" << std::endl;
+    std::cout << boost::format("Position Error Mean: [%.5f]") % positionErrorMeanOutliers << std::endl;
+    std::cout << boost::format("Orientation Error Mean: [%.5f]\n") % orientationErrorMeanOutliers << std::endl;
 }
 
 unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
