@@ -119,6 +119,10 @@ int main(int argc, char **argv) {
     std::cout << "Position Error Mean: [" << orientationErrorTotal / totalEntries << "]" << std::endl;
     std::cout << "Total Entries: " << totalEntries << ", " << 
         csvVec.size() - 1 - totalEntries << " entries were not found" <<std::endl;
+
+    // for(int i {0}; i < 2000; i++) {
+    //     std::cout << "Time Stamp: [" << bagVec.at(i).at(0) << "], Yaw Calculated: [" << bagVec.at(i).at(3) << "].\n";
+    // }
 }
 
 int closest(const std::vector<std::vector<double>> &vec, double val) {
@@ -143,8 +147,12 @@ int closest(const std::vector<std::vector<double>> &vec, double val) {
 }
 
 int findValid(const std::vector<std::vector<double>> &vec, int index) {
-    while(isnan(vec.at(index).at(3))) {
-        index++;
+    if(!isnan(vec.at(index).at(3))) {
+        return index;
     }
-    return index;
+    for(int i{index - 5}; i < index + 5; i++) {
+        if(i != index && (!isnan(vec.at(i).at(3))) && (vec.at(index).at(0) == vec.at(i).at(0))) {
+            return i;
+        }
+    }
 }
