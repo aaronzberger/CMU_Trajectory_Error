@@ -11,6 +11,7 @@
 
 unsigned findInBag(const std::vector<std::vector<double>> &vec, double val);
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index);
+std::string getNewFileName(const std::string &full_path);
 
 const unsigned timeIndex = 0;
 const unsigned xIndex = 1;
@@ -34,7 +35,7 @@ int main(int argc, char **argv) {
 
     //Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
-        perror("Expected two arguments: CSV file, BAG file\n");
+        perror("Error: Expected two arguments: CSV file, BAG file\n");
         return 1;
     }
 
@@ -228,14 +229,74 @@ int main(int argc, char **argv) {
     std::cout << "Not Counting Outliers:" << std::endl;
     std::cout << boost::format("Position Error Mean: [%.5f]") % positionErrorMeanOutliers << std::endl;
     std::cout << boost::format("Orientation Error Mean: [%.5f]\n") % orientationErrorMeanOutliers << std::endl;
+
+
+    //Write a new csv file for the errors
+    std::ofstream errorCSVFile(getNewFileName(argv[2]));
+
+    //Write the column headers
+    errorCSVFile << "Time Stamp, Position Error, Orientation Error" << "\n";
+
+    //Write the individual entries
+    for (auto vec : errorVec) {
+        errorCSVFile << boost::format("%-.5f,%-.5f,%-.5f") 
+            % vec.at(timeIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
+    }
+    errorCSVFile << "\n\n";
+
+    //Write the outliers
+    errorCSVFile << "OUTLIERS" << "\n";
+
+    for(auto vec: outlierVec) {
+        errorCSVFile << boost::format("%-.3f,") % errorVec.at(vec.at(0)).at(timeIndex);
+        if(vec.at(outlierIdentifierIndex) == outlierAtPosition || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
+            errorCSVFile << boost::format("%-.5f") % errorVec.at(vec.at(indexInErrorVecIndex)).at(positionErrorIndex);
+        }
+        if(vec.at(outlierIdentifierIndex) == outlierAtOrientation || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
+            errorCSVFile << boost::format(",%-.5f") % errorVec.at(vec.at(indexInErrorVecIndex)).at(orientationErrorIndex);
+        }
+        errorCSVFile << "\n";
+    }
+
+    //Write the analysis (means and entry count)
+    errorCSVFile << "\nANALYSIS" << "\n\n";
+
+    errorCSVFile << "Total Entries," << errorVec.size() << "\n";
+    errorCSVFile << "Entries not Found," << (csvVec.size() - 1 - errorVec.size()) << "\n\n";
+    errorCSVFile << "Counting Outliers" << "\n";
+    errorCSVFile << boost::format("Position Error Mean,%-.7f") % positionErrorMean << "\n";
+    errorCSVFile << boost::format("Orientation Error Mean,%-.7f") % orientationErrorMean << "\n\n";
+
+    errorCSVFile << "Not Counting Outliers" << "\n";
+    errorCSVFile << boost::format("Position Error Mean,%-.7f") % positionErrorMeanOutliers << "\n";
+    errorCSVFile << boost::format("Orientation Error Mean,%-.7f") % orientationErrorMeanOutliers << "\n";
+    errorCSVFile.close();
+
+    return 0;
 }
 
 /**
- * Gets the index of the message in the bag that has the given time stamp
+ * @brief Finds the name of a file from the absolute path
+ * 
+ * @param full_path the full path of the file, including the name and extension
+ * @return the name of the file
+ * @throw std::out_of_range if no "/"" is found in the full path,
+ *                          if no "." is found in the file name
+ */
+std::string getNewFileName(const std::string &full_path) {
+    std::string file_name {full_path.substr(full_path.find_last_of("/") + 1)};
+    file_name = file_name.substr(0, file_name.rfind('.'));
+    file_name.append("_trajectory_error.csv");
+    return file_name;
+}
+
+/**
+ * @brief Gets the index of the message in the bag that has the given time stamp
  * 
  * @param vec the bag vector in which to look for the time stamp
  * @param val the time stamp to look for
  * @return the index of the message with that time stamp
+ * @throw std::out_of_range if bagVec was not created properly or columns are missing
  */
 unsigned findInBag(const std::vector<std::vector<double>> &vec, double val) {
     if (val <= vec.at(0).at(timeIndex))
@@ -259,11 +320,12 @@ unsigned findInBag(const std::vector<std::vector<double>> &vec, double val) {
 }
 
 /**
- * Helper function to findInBag that corrects for invalid entries in the bag
+ * @brief Helper function to findInBag that corrects for invalid entries in the bag
  * 
  * @param vec the bag vector the index refers to
  * @param index the index in the vector of the already-chosen message
  * @return the index of the message with the correct time stamp
+ * @throw std::out_of_range if bagVec was not created properly or columns are missing
  */
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index) {
     if(!isnan(vec.at(index).at(yawIndex))) {

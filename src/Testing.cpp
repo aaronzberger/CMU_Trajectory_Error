@@ -6,19 +6,19 @@ int getClosest(const std::vector<std::vector<double>> &vec, int val1, int val2, 
 
 int main(int argc, char **argv)
 {
-    std::vector<std::vector<double>> hey{
-        {5.5, 6.7, 9.3},
-        {6.4, 7.5, 8.5},
-        {8.3, 6.7, 9.3},
-        {9.1, 6.7, 9.3},
-        {10.5, 6.7, 9.3},
-        {12.6, 6.7, 9.3},
-        {15.7, 6.7, 9.3},
-        {15.9, 6.7, 9.3}};
-    double target{15.7};
-    int answer{findInBag(hey, target)};
-    std::cout.precision(5);
-    std::cout << answer << std::endl;
+    // std::vector<std::vector<double>> hey{
+    //     {5.5, 6.7, 9.3},
+    //     {6.4, 7.5, 8.5},
+    //     {8.3, 6.7, 9.3},
+    //     {9.1, 6.7, 9.3},
+    //     {10.5, 6.7, 9.3},
+    //     {12.6, 6.7, 9.3},
+    //     {15.7, 6.7, 9.3},
+    //     {15.9, 6.7, 9.3}};
+    // double target{15.7};
+    // int answer{findInBag(hey, target)};
+    // std::cout.precision(5);
+    // std::cout << answer << std::endl;
 }
 
 int findInBag(const std::vector<std::vector<double>> &vec, double val)
