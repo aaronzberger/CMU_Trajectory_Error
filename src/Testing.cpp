@@ -1,7 +1,7 @@
 #include <vector>
 #include <iostream>
 
-int closest(const std::vector<std::vector<double>> &vec, double val);
+int findInBag(const std::vector<std::vector<double>> &vec, double val);
 int getClosest(const std::vector<std::vector<double>> &vec, int val1, int val2, double val);
 
 int main(int argc, char **argv)
@@ -16,12 +16,12 @@ int main(int argc, char **argv)
         {15.7, 6.7, 9.3},
         {15.9, 6.7, 9.3}};
     double target{15.7};
-    int answer{closest(hey, target)};
+    int answer{findInBag(hey, target)};
     std::cout.precision(5);
     std::cout << answer << std::endl;
 }
 
-int closest(const std::vector<std::vector<double>> &vec, double val)
+int findInBag(const std::vector<std::vector<double>> &vec, double val)
 {
     if (val <= vec.at(0).at(0))
         return 0;

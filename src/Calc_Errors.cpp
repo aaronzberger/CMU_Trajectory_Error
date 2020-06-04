@@ -1,15 +1,15 @@
-#include <rosbag/bag.h>
-#include <rosbag/view.h>
-#include <iostream>
-#include <fstream>
 #include <string>
 #include <vector>
+#include <iostream>
+#include <fstream>
 #include <stdio.h>
+#include <rosbag/bag.h>
+#include <rosbag/view.h>
 #include <boost/format.hpp>
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_datatypes.h"
 
-unsigned closest(const std::vector<std::vector<double>> &vec, double val);
+unsigned findInBag(const std::vector<std::vector<double>> &vec, double val);
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index);
 
 const unsigned timeIndex = 0;
@@ -32,29 +32,28 @@ const unsigned outlierIdentifierIndex = 1;
 
 int main(int argc, char **argv) {
 
+    //Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
         perror("Expected two arguments: CSV file, BAG file\n");
         return 1;
     }
 
-    //Open the CSV file
+    //Open the CSV file from the passed-in path
     std::ifstream file(argv[1]);
     if (!file.is_open()) {
         std::cout << "Could not open CSV File" << std::endl;
         return 1;
     }
 
-    //Declare vectors for the bag and csv files, and the calculated error
-    std::vector<std::vector<double>> csvVec;
-    std::vector<std::vector<double>> bagVec;
-    std::vector<std::vector<double>> errorVec;
-
+    //Declare holding variables for the values of each column
     std::string secs, nsecs, x, y, yaw;
 
     //Parse out the first line, which are the titles of the columns
     std::getline(file, secs, '\n');
 
-    //loop through CSV file and copy data to a vector. Calculate the time while copying
+    std::vector<std::vector<double>> csvVec;
+
+    //Copy the csv entries to the vector csvVec while calculating the time for each entry.
     while (file.good()) {
         std::getline(file, secs, ',');
         std::getline(file, nsecs, ',');
@@ -75,16 +74,18 @@ int main(int argc, char **argv) {
     }
     file.close();
 
-    //Open the .bag file
+    //Open the bag file from the passed-in path
     rosbag::Bag bag;
     bag.open(argv[2]);
+
     rosbag::View viewer(bag);
 
-    //Loop through the bag file and copy some contents to a vector
+    std::vector<std::vector<double>> bagVec;
+
+    //Copy the bag entries to the vector bagVec while converting the quaternion to a yaw measurement
     for (const rosbag::MessageInstance msg : viewer) {
         nav_msgs::Odometry::ConstPtr thisMsg = msg.instantiate<nav_msgs::Odometry>();
         if (thisMsg != nullptr) {
-            //Convert Quaternion orientation to Euler
             tf::Quaternion quaternion;
             quaternion.setW(thisMsg->pose.pose.orientation.w);
             quaternion.setX(thisMsg->pose.pose.orientation.x);
@@ -107,16 +108,16 @@ int main(int argc, char **argv) {
     }
     bag.close();
 
-    unsigned bagSize {viewer.size()};
-
     double positionErrorTotal{0};
     double orientationErrorTotal{0};
-    int totalEntries{0};
 
-    //Loop through csv Vector and find corresponding bag entries. Calculate error and add to error Vector
+    std::vector<std::vector<double>> errorVec;
+
+    //Loop through csvVec and find the corresponding bag entries. Calculate the error and copy it to errorVec
     for (auto csvMsg : csvVec) {
-        unsigned bagMsgIndex{closest(bagVec, csvMsg.at(timeIndex))};       
+        unsigned bagMsgIndex{findInBag(bagVec, csvMsg.at(timeIndex))};       
         if (bagVec.at(bagMsgIndex).at(timeIndex) == csvMsg.at(timeIndex)) {
+            //Calculate position error using Euclidian distance
             double positionError{pow((csvMsg.at(xIndex) - bagVec.at(bagMsgIndex).at(xIndex)), 2) + 
                                  pow((csvMsg.at(yIndex) - bagVec.at(bagMsgIndex).at(yIndex)), 2)};
             double orientationError{abs(csvMsg.at(yawIndex) - bagVec.at(bagMsgIndex).at(yawIndex))};
@@ -131,34 +132,35 @@ int main(int argc, char **argv) {
 
             positionErrorTotal += positionError;
             orientationErrorTotal += orientationError;
-            totalEntries++;
         }
     }
 
-    double positionErrorMean {positionErrorTotal / totalEntries};
-    double orientationErrorMean {orientationErrorTotal / totalEntries};
+    double positionErrorMean {positionErrorTotal / errorVec.size()};
+    double orientationErrorMean {orientationErrorTotal / errorVec.size()};
 
-    double positionErrorSum {0};
-    double orientationErrorSum {0};
+    double positionErrorSD {0};
+    double orientationErrorSD {0};
+
+    //Loop through errorVec and calculate the standard deviation for position error and orientation error
     for(int i {0}; i < errorVec.size(); i++) {
-        positionErrorSum += pow(errorVec.at(i).at(positionErrorIndex), 2);
-        orientationErrorSum += pow(errorVec.at(i).at(orientationErrorIndex), 2);
+        positionErrorSD += pow(errorVec.at(i).at(positionErrorIndex), 2);
+        orientationErrorSD += pow(errorVec.at(i).at(orientationErrorIndex), 2);
     }
-    positionErrorSum /= errorVec.size() - 1;
-    orientationErrorSum /= errorVec.size() - 1;
-    double positionErrorSD {sqrt(positionErrorSum)};
-    double orientationErrorSD {sqrt(orientationErrorSum)};
+    positionErrorSD /= errorVec.size();
+    orientationErrorSD /= errorVec.size();
 
-    //Construst a vector to store outliers
-    //The first int is index in the errorVec, the second identifies which value is the outler
-    //0:position, 1:orientation, 2:both
-    std::vector<std::vector<int>> outliers;
+    positionErrorSD = sqrt(positionErrorSD);
+    orientationErrorSD = sqrt(orientationErrorSD);
+
+
+    std::vector<std::vector<int>> outlierVec;
 
     double positionErrorMeanOutliers {0};
     int positionErrorMeanCount {0};
     double orientationErrorMeanOutliers {0};
     int orientationErrorMeanCount {0};
 
+    //Loop through errorVec and find outlier entries. Store those entries in outlierVec
     for(int i {0}; i < errorVec.size(); i++) {
         double positionErrorZScore {(errorVec.at(i).at(positionErrorIndex) - positionErrorMean) / positionErrorSD};
         double orientationErrorZScore {(errorVec.at(i).at(orientationErrorIndex) - orientationErrorMean) / orientationErrorSD};
@@ -177,7 +179,7 @@ int main(int argc, char **argv) {
                 positionErrorMeanCount++;
                 positionErrorMeanOutliers += errorVec.at(i).at(positionErrorIndex);
             }
-            outliers.push_back(instance);
+            outlierVec.push_back(instance);
         } else {
             positionErrorMeanCount++;
             orientationErrorMeanCount++;
@@ -190,18 +192,20 @@ int main(int argc, char **argv) {
     orientationErrorMeanOutliers /= orientationErrorMeanCount;
 
     //Print data
-    //Individual Entries
+
+    //Print the individual error entries
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "INDIVIDUAL ENTRIES\n" << std::endl;
     for (auto vec : errorVec) {
         std::cout << boost::format("Time: [%.3f], Position Error: [%.5f], Orientation Error: [%.5f]") 
             % vec.at(timeIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
-    //Outliers
+
+    //Print the outliers
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "OUTLIERS\n" << std::endl;
 
-    for(auto vec: outliers) {
+    for(auto vec: outlierVec) {
         std::cout << boost::format("Stamp: [%.3f], ") % errorVec.at(vec.at(0)).at(timeIndex);
         if(vec.at(outlierIdentifierIndex) == outlierAtPosition || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
             std::cout << boost::format("Position Error: [%.5f]") % errorVec.at(vec.at(indexInErrorVecIndex)).at(positionErrorIndex);
@@ -211,11 +215,12 @@ int main(int argc, char **argv) {
         }
         std::cout << std::endl;
     }
-    //Analysis
+
+    //Print the entry count and the means for position and orientation
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "ANALYSIS\n" << std::endl;
     std::cout << boost::format("Total Entries: %d, %d entries were not in the bag file\n")
-        % totalEntries % (csvVec.size() - 1 - totalEntries) << std::endl;
+        % errorVec.size() % (csvVec.size() - 1 - errorVec.size()) << std::endl;
     std::cout << "Counting Outliers:" << std::endl;
     std::cout << boost::format("Position Error Mean: [%.5f]") % positionErrorMean << std::endl;
     std::cout << boost::format("Orientation Error Mean: [%.5f]\n") % orientationErrorMean << std::endl;
@@ -225,7 +230,14 @@ int main(int argc, char **argv) {
     std::cout << boost::format("Orientation Error Mean: [%.5f]\n") % orientationErrorMeanOutliers << std::endl;
 }
 
-unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
+/**
+ * Gets the index of the message in the bag that has the given time stamp
+ * 
+ * @param vec the bag vector in which to look for the time stamp
+ * @param val the time stamp to look for
+ * @return the index of the message with that time stamp
+ */
+unsigned findInBag(const std::vector<std::vector<double>> &vec, double val) {
     if (val <= vec.at(0).at(timeIndex))
         return findValid(vec, 0);
     if (val >= vec.at(vec.size() - 1).at(timeIndex))
@@ -246,6 +258,13 @@ unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
     return findValid(vec, mid);
 }
 
+/**
+ * Helper function to findInBag that corrects for invalid entries in the bag
+ * 
+ * @param vec the bag vector the index refers to
+ * @param index the index in the vector of the already-chosen message
+ * @return the index of the message with the correct time stamp
+ */
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index) {
     if(!isnan(vec.at(index).at(yawIndex))) {
         return index;
