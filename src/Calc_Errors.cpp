@@ -4,6 +4,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <stdio.h>
 #include <boost/format.hpp>
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_datatypes.h"
@@ -30,8 +31,14 @@ const unsigned indexInErrorVecIndex = 0;
 const unsigned outlierIdentifierIndex = 1;
 
 int main(int argc, char **argv) {
+
+    if(argc != 3) {
+        perror("Expected two arguments: CSV file, BAG file\n");
+        return 1;
+    }
+
     //Open the CSV file
-    std::ifstream file("src/trajectory_error/field_files/global_path.csv");
+    std::ifstream file(argv[1]);
     if (!file.is_open()) {
         std::cout << "Could not open CSV File" << std::endl;
         return 1;
@@ -70,7 +77,7 @@ int main(int argc, char **argv) {
 
     //Open the .bag file
     rosbag::Bag bag;
-    bag.open("src/trajectory_error/field_files/nav_test.bag");
+    bag.open(argv[2]);
     rosbag::View viewer(bag);
 
     //Loop through the bag file and copy some contents to a vector
