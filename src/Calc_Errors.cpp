@@ -11,9 +11,27 @@
 unsigned closest(const std::vector<std::vector<double>> &vec, double val);
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index);
 
+const unsigned timeIndex = 0;
+const unsigned xIndex = 1;
+const unsigned yIndex = 2;
+const unsigned yawIndex = 3;
+
+const unsigned positionErrorIndex = 1;
+const unsigned orientationErrorIndex = 2;
+
+const double zScoreSignificanceLevel = 3;
+const unsigned int msgSearchRadius = 5;
+
+const unsigned outlierAtPosition = 0;
+const unsigned outlierAtOrientation = 1;
+const unsigned outlierAtBoth = 2;
+
+const unsigned indexInErrorVecIndex = 0;
+const unsigned outlierIdentifierIndex = 1;
+
 int main(int argc, char **argv) {
     //Open the CSV file
-    std::ifstream file("src/trajectory_error/field_files/global_path_1.csv");
+    std::ifstream file("src/trajectory_error/field_files/global_path.csv");
     if (!file.is_open()) {
         std::cout << "Could not open CSV File" << std::endl;
         return 1;
@@ -30,13 +48,14 @@ int main(int argc, char **argv) {
     std::getline(file, secs, '\n');
 
     //loop through CSV file and copy data to a vector. Calculate the time while copying
-    int row {0};
-    while (file.good() && row < 3339) {
+    while (file.good()) {
         std::getline(file, secs, ',');
         std::getline(file, nsecs, ',');
         std::getline(file, x, ',');
         std::getline(file, y, ',');
         std::getline(file, yaw, '\n');
+
+        if(file.eof()) break;
 
         std::vector<double> instance;
 
@@ -46,13 +65,12 @@ int main(int argc, char **argv) {
         instance.push_back(std::stod(yaw));
 
         csvVec.push_back(instance);
-        row++;
     }
     file.close();
 
     //Open the .bag file
     rosbag::Bag bag;
-    bag.open("src/trajectory_error/field_files/nav_test_1.bag");
+    bag.open("src/trajectory_error/field_files/nav_test.bag");
     rosbag::View viewer(bag);
 
     //Loop through the bag file and copy some contents to a vector
@@ -90,14 +108,15 @@ int main(int argc, char **argv) {
 
     //Loop through csv Vector and find corresponding bag entries. Calculate error and add to error Vector
     for (auto csvMsg : csvVec) {
-        unsigned bagMsgIndex{closest(bagVec, csvMsg.at(0))};       
-        if (bagVec.at(bagMsgIndex).at(0) == csvMsg.at(0)) {
-            double positionError{pow((csvMsg.at(1) - bagVec.at(bagMsgIndex).at(1)), 2) + pow((csvMsg.at(2) - bagVec.at(bagMsgIndex).at(2)), 2)};
-            double orientationError{abs(csvMsg.at(3) - bagVec.at(bagMsgIndex).at(3))};
+        unsigned bagMsgIndex{closest(bagVec, csvMsg.at(timeIndex))};       
+        if (bagVec.at(bagMsgIndex).at(timeIndex) == csvMsg.at(timeIndex)) {
+            double positionError{pow((csvMsg.at(xIndex) - bagVec.at(bagMsgIndex).at(xIndex)), 2) + 
+                                 pow((csvMsg.at(yIndex) - bagVec.at(bagMsgIndex).at(yIndex)), 2)};
+            double orientationError{abs(csvMsg.at(yawIndex) - bagVec.at(bagMsgIndex).at(yawIndex))};
 
             std::vector<double> instance;
 
-            instance.push_back(bagVec.at(bagMsgIndex).at(0));
+            instance.push_back(bagVec.at(bagMsgIndex).at(timeIndex));
             instance.push_back(positionError);
             instance.push_back(orientationError);
 
@@ -115,8 +134,8 @@ int main(int argc, char **argv) {
     double positionErrorSum {0};
     double orientationErrorSum {0};
     for(int i {0}; i < errorVec.size(); i++) {
-        positionErrorSum += pow(errorVec.at(i).at(1), 2);
-        orientationErrorSum += pow(errorVec.at(i).at(2), 2);
+        positionErrorSum += pow(errorVec.at(i).at(positionErrorIndex), 2);
+        orientationErrorSum += pow(errorVec.at(i).at(orientationErrorIndex), 2);
     }
     positionErrorSum /= errorVec.size() - 1;
     orientationErrorSum /= errorVec.size() - 1;
@@ -134,29 +153,29 @@ int main(int argc, char **argv) {
     int orientationErrorMeanCount {0};
 
     for(int i {0}; i < errorVec.size(); i++) {
-        double positionErrorZScore {(errorVec.at(i).at(1) - positionErrorMean) / positionErrorSD};
-        double orientationErrorZScore {(errorVec.at(i).at(2) - orientationErrorMean) / orientationErrorSD};
+        double positionErrorZScore {(errorVec.at(i).at(positionErrorIndex) - positionErrorMean) / positionErrorSD};
+        double orientationErrorZScore {(errorVec.at(i).at(orientationErrorIndex) - orientationErrorMean) / orientationErrorSD};
 
-        if(abs(positionErrorZScore) > 3 || abs(orientationErrorZScore) > 3) {
+        if(abs(positionErrorZScore) > zScoreSignificanceLevel || abs(orientationErrorZScore) > zScoreSignificanceLevel) {
             std::vector<int> instance;
             instance.push_back(i);
-            if(abs(positionErrorZScore) > 3 && abs(orientationErrorZScore) > 3) {
-                instance.push_back(2);
-            } else if(abs(positionErrorZScore) > 3) {
-                instance.push_back(0);
+            if(abs(positionErrorZScore) > zScoreSignificanceLevel && abs(orientationErrorZScore) > zScoreSignificanceLevel) {
+                instance.push_back(outlierAtBoth);
+            } else if(abs(positionErrorZScore) > zScoreSignificanceLevel) {
+                instance.push_back(outlierAtPosition);
                 orientationErrorMeanCount++;
-                orientationErrorMeanOutliers += errorVec.at(i).at(2);
+                orientationErrorMeanOutliers += errorVec.at(i).at(orientationErrorIndex);
             } else {
-                instance.push_back(1);
+                instance.push_back(outlierAtOrientation);
                 positionErrorMeanCount++;
-                positionErrorMeanOutliers += errorVec.at(i).at(1);
+                positionErrorMeanOutliers += errorVec.at(i).at(positionErrorIndex);
             }
             outliers.push_back(instance);
         } else {
             positionErrorMeanCount++;
             orientationErrorMeanCount++;
-            positionErrorMeanOutliers += errorVec.at(i).at(1);
-            orientationErrorMeanOutliers += errorVec.at(i).at(2);
+            positionErrorMeanOutliers += errorVec.at(i).at(positionErrorIndex);
+            orientationErrorMeanOutliers += errorVec.at(i).at(orientationErrorIndex);
         }
     }
 
@@ -168,20 +187,20 @@ int main(int argc, char **argv) {
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "INDIVIDUAL ENTRIES\n" << std::endl;
     for (auto vec : errorVec) {
-        std::cout << boost::format("Time: [%.15f], Position Error: [%.15f], Orientation Error: [%.15f]") 
-            % vec.at(0) % vec.at(1) % vec.at(2) << std::endl;
+        std::cout << boost::format("Time: [%.3f], Position Error: [%.5f], Orientation Error: [%.5f]") 
+            % vec.at(timeIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
     //Outliers
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "OUTLIERS\n" << std::endl;
 
     for(auto vec: outliers) {
-        std::cout << boost::format("Stamp: [%.15f], ") % errorVec.at(vec.at(0)).at(0);
-        if(vec.at(1) == 0 || vec.at(1) == 2) {
-            std::cout << boost::format("Position Error: [%.15f]") % errorVec.at(vec.at(0)).at(1);
+        std::cout << boost::format("Stamp: [%.3f], ") % errorVec.at(vec.at(0)).at(timeIndex);
+        if(vec.at(outlierIdentifierIndex) == outlierAtPosition || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
+            std::cout << boost::format("Position Error: [%.5f]") % errorVec.at(vec.at(indexInErrorVecIndex)).at(positionErrorIndex);
         }
-        if(vec.at(1) == 1 || vec.at(1) == 2) {
-            std::cout << boost::format("Orientation Error: [%.15f]") % errorVec.at(vec.at(0)).at(2);
+        if(vec.at(outlierIdentifierIndex) == outlierAtOrientation || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
+            std::cout << boost::format("Orientation Error: [%.5f]") % errorVec.at(vec.at(indexInErrorVecIndex)).at(orientationErrorIndex);
         }
         std::cout << std::endl;
     }
@@ -200,17 +219,17 @@ int main(int argc, char **argv) {
 }
 
 unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
-    if (val <= vec.at(0).at(0))
+    if (val <= vec.at(0).at(timeIndex))
         return findValid(vec, 0);
-    if (val >= vec.at(vec.size() - 1).at(0))
+    if (val >= vec.at(vec.size() - 1).at(timeIndex))
         return findValid(vec, vec.size() - 1);
 
     unsigned i = 0, j = vec.size() - 1, mid = 0;
     while (i < j) {
         mid = (i + j) / 2;
-        if (vec.at(mid).at(0) == val)
+        if (vec.at(mid).at(timeIndex) == val)
             return findValid(vec, mid);
-        if (vec.at(mid).at(0) > val) {
+        if (vec.at(mid).at(timeIndex) > val) {
             j = mid;
         }
         else {
@@ -221,12 +240,12 @@ unsigned closest(const std::vector<std::vector<double>> &vec, double val) {
 }
 
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index) {
-    if(!isnan(vec.at(index).at(3))) {
+    if(!isnan(vec.at(index).at(yawIndex))) {
         return index;
     }
-    if(index >= 5 && index <= vec.size() - 6) {
-        for(unsigned i{index - 5}; i < index + 5; i++) {
-            if(i != index && (!isnan(vec.at(i).at(3))) && (vec.at(index).at(0) == vec.at(i).at(0))) {
+    if(index >= msgSearchRadius && index < vec.size() - msgSearchRadius) {
+        for(unsigned i{index - msgSearchRadius}; i < index + msgSearchRadius; i++) {
+            if(i != index && (!isnan(vec.at(i).at(yawIndex))) && (vec.at(index).at(timeIndex) == vec.at(i).at(timeIndex))) {
                 return i;
             }
         }
