@@ -2,7 +2,7 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <stdio.h>
+#include <cmath>
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 #include <boost/format.hpp>
@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
             //Calculate position error using Euclidian distance
             double positionError{pow((csvMsg.at(xIndex) - bagVec.at(bagMsgIndex).at(xIndex)), 2) + 
                                  pow((csvMsg.at(yIndex) - bagVec.at(bagMsgIndex).at(yIndex)), 2)};
-            double orientationError{abs(csvMsg.at(yawIndex) - bagVec.at(bagMsgIndex).at(yawIndex))};
+            double orientationError{std::abs(csvMsg.at(yawIndex) - bagVec.at(bagMsgIndex).at(yawIndex))};
 
             std::vector<double> instance;
 
@@ -168,12 +168,12 @@ int main(int argc, char **argv) {
         double positionErrorZScore {(errorVec.at(i).at(positionErrorIndex) - positionErrorMean) / positionErrorSD};
         double orientationErrorZScore {(errorVec.at(i).at(orientationErrorIndex) - orientationErrorMean) / orientationErrorSD};
 
-        if(abs(positionErrorZScore) > zScoreSignificanceLevel || abs(orientationErrorZScore) > zScoreSignificanceLevel) {
+        if(std::abs(positionErrorZScore) > zScoreSignificanceLevel || std::abs(orientationErrorZScore) > zScoreSignificanceLevel) {
             std::vector<int> instance;
             instance.push_back(i);
-            if(abs(positionErrorZScore) > zScoreSignificanceLevel && abs(orientationErrorZScore) > zScoreSignificanceLevel) {
+            if(std::abs(positionErrorZScore) > zScoreSignificanceLevel && std::abs(orientationErrorZScore) > zScoreSignificanceLevel) {
                 instance.push_back(outlierAtBoth);
-            } else if(abs(positionErrorZScore) > zScoreSignificanceLevel) {
+            } else if(std::abs(positionErrorZScore) > zScoreSignificanceLevel) {
                 instance.push_back(outlierAtPosition);
                 orientationErrorMeanCount++;
                 orientationErrorMeanOutliers += errorVec.at(i).at(orientationErrorIndex);
