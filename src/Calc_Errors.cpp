@@ -11,7 +11,7 @@
 
 unsigned findInBag(const std::vector<std::vector<double>> &vec, double val);
 unsigned findValid(const std::vector<std::vector<double>> &vec, unsigned index);
-std::string getNewFileName(const std::string &full_path);
+std::string getBagName(const std::string &full_path);
 
 const unsigned timeIndex = 0;
 const unsigned xIndex = 1;
@@ -31,11 +31,13 @@ const unsigned outlierAtBoth = 2;
 const unsigned indexInErrorVecIndex = 0;
 const unsigned outlierIdentifierIndex = 1;
 
+const double rosTimeConversionFactor = pow(10, -9);
+
 int main(int argc, char **argv) {
 
     //Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
-        perror("Error: Expected two arguments: CSV file, BAG file\n");
+        perror("Error: Expected two arguments: CSV file path, BAG file path\n");
         return 1;
     }
 
@@ -66,7 +68,7 @@ int main(int argc, char **argv) {
 
         std::vector<double> instance;
 
-        instance.push_back(std::stod(secs) + (std::stod(nsecs) * (pow(10, -9))));
+        instance.push_back(std::stod(secs) + (std::stod(nsecs) * rosTimeConversionFactor));
         instance.push_back(std::stod(x));
         instance.push_back(std::stod(y));
         instance.push_back(std::stod(yaw));
@@ -96,7 +98,7 @@ int main(int argc, char **argv) {
             double yaw {tf::getYaw(quaternion)};
             std::vector<double> instance;
 
-            instance.push_back(thisMsg->header.stamp.sec + (thisMsg->header.stamp.nsec * (pow(10, -9))));
+            instance.push_back(thisMsg->header.stamp.sec + (thisMsg->header.stamp.nsec * rosTimeConversionFactor));
             instance.push_back(thisMsg->pose.pose.position.x);
             instance.push_back(thisMsg->pose.pose.position.y);
             instance.push_back(yaw);
@@ -232,7 +234,7 @@ int main(int argc, char **argv) {
 
 
     //Write a new csv file for the errors
-    std::ofstream errorCSVFile(getNewFileName(argv[2]));
+    std::ofstream errorCSVFile(getBagName(argv[2]).append("_error.csv"));
 
     //Write the column headers
     errorCSVFile << "Time Stamp, Position Error, Orientation Error" << "\n";
@@ -272,6 +274,16 @@ int main(int argc, char **argv) {
     errorCSVFile << boost::format("Orientation Error Mean,%-.7f") % orientationErrorMeanOutliers << "\n";
     errorCSVFile.close();
 
+    //Write a new csv file for the gnu plot
+    std::ofstream errorGraphCSVFile(getBagName(argv[2]).append("_error_graph_data.csv"));
+
+    //Write the individual entries, adjusting time so it is viewable on a graph
+    double startingTime {errorVec.at(0).at(timeIndex)};
+    for (auto vec : errorVec) {
+        errorGraphCSVFile << boost::format("%.5f,%.5f,%.5f") 
+            % (vec.at(timeIndex) - startingTime) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
+    }
+
     return 0;
 }
 
@@ -283,10 +295,9 @@ int main(int argc, char **argv) {
  * @throw std::out_of_range if no "/"" is found in the full path,
  *                          if no "." is found in the file name
  */
-std::string getNewFileName(const std::string &full_path) {
+std::string getBagName(const std::string &full_path) {
     std::string file_name {full_path.substr(full_path.find_last_of("/") + 1)};
     file_name = file_name.substr(0, file_name.rfind('.'));
-    file_name.append("_trajectory_error.csv");
     return file_name;
 }
 
