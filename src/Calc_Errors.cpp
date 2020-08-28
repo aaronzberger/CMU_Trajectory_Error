@@ -6,6 +6,7 @@
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 #include <boost/format.hpp>
+#include <boost/filesystem.hpp>
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_datatypes.h"
 
@@ -20,7 +21,6 @@ const unsigned yawIndex = 3;
 
 const unsigned positionErrorIndex = 1;
 const unsigned orientationErrorIndex = 2;
-
 const double zScoreSignificanceLevel = 3;
 const unsigned int msgSearchRadius = 10;
 
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
 
     //Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
-        perror("Error: Expected two arguments: CSV file path, BAG file path\n");
+        perror("Error: Expected two arguments: CSV file path, BAG folder path\n");
         return 1;
     }
 
@@ -76,41 +76,63 @@ int main(int argc, char **argv) {
     }
     file.close();
 
-    //Open the bag file from the passed-in path
-    rosbag::Bag bag;
-    bag.open(argv[2]);
+    //Open the bag files from the passed-in path
 
-    rosbag::View viewer(bag);
+    const boost::filesystem::path path(argv[2]);
+
+    std::vector<boost::filesystem::directory_entry> bagFiles;
+
+    if(!boost::filesystem::exists(path)) {
+        perror("Unable to open bag directory");
+        return 1;
+    }
+    if(boost::filesystem::is_directory(path)) {
+
+
+        for(const auto file : boost::filesystem::directory_iterator(path)) {
+            bagFiles.push_back(file);
+        }
+
+        std::sort(bagFiles.begin(), bagFiles.end());
+    } else {
+        perror("Second argument must be a path to the bag directory");
+    }
 
     std::vector<std::vector<double>> bagVec;
 
-    //Copy the bag entries to the vector bagVec while converting the quaternion to a yaw measurement
-    for (const rosbag::MessageInstance msg : viewer) {
-        if(msg.getDataType() == "nav_msgs/Odometry") {
-            nav_msgs::Odometry::ConstPtr thisMsg = msg.instantiate<nav_msgs::Odometry>();
-            if (thisMsg != nullptr) {
-                tf::Quaternion quaternion;
-                quaternion.setW(thisMsg->pose.pose.orientation.w);
-                quaternion.setX(thisMsg->pose.pose.orientation.x);
-                quaternion.setY(thisMsg->pose.pose.orientation.y);
-                quaternion.setZ(thisMsg->pose.pose.orientation.z);
+    for(auto &bagFile : bagFiles) {
+        rosbag::Bag bag;
+        bag.open(bagFile.path().string());
 
-                double yaw {tf::getYaw(quaternion)};
-                std::vector<double> instance;
+        rosbag::View viewer(bag);
+        //Copy the bag entries to the vector bagVec while converting the quaternion to a yaw measurement
+        for (const rosbag::MessageInstance msg : viewer) {
+            if(msg.getDataType() == "nav_msgs/Odometry") {
+                nav_msgs::Odometry::ConstPtr thisMsg = msg.instantiate<nav_msgs::Odometry>();
+                if (thisMsg != nullptr) {
+                    tf::Quaternion quaternion;
+                    quaternion.setW(thisMsg->pose.pose.orientation.w);
+                    quaternion.setX(thisMsg->pose.pose.orientation.x);
+                    quaternion.setY(thisMsg->pose.pose.orientation.y);
+                    quaternion.setZ(thisMsg->pose.pose.orientation.z);
 
-                instance.push_back(thisMsg->header.stamp.sec + (thisMsg->header.stamp.nsec * rosTimeConversionFactor));
-                instance.push_back(thisMsg->pose.pose.position.x);
-                instance.push_back(thisMsg->pose.pose.position.y);
-                instance.push_back(yaw);
+                    double yaw {tf::getYaw(quaternion)};
+                    std::vector<double> instance;
 
-                bagVec.push_back(instance);
-            }
-            else {
-                std::cout << "Error: Could not retrieve this bag message. " << msg.getDataType() << std::endl;
+                    instance.push_back(thisMsg->header.stamp.sec + (thisMsg->header.stamp.nsec * rosTimeConversionFactor));
+                    instance.push_back(thisMsg->pose.pose.position.x);
+                    instance.push_back(thisMsg->pose.pose.position.y);
+                    instance.push_back(yaw);
+
+                    bagVec.push_back(instance);
+                }
+                else {
+                    std::cout << "Error: Could not retrieve this bag message. " << msg.getDataType() << std::endl;
+                }
             }
         }
+        bag.close();
     }
-    bag.close();
 
     double positionErrorTotal{0};
     double orientationErrorTotal{0};
