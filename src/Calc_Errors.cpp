@@ -371,15 +371,4 @@ unsigned findValid(const std::vector<double> &csvMsg, const std::vector<std::vec
         }
     }
     return bestIndex;
-    // if(!isnan(bag.at(index).at(yawIndex))) {
-    //     return index;
-    // }
-    // if(index >= msgSearchRadius && index < bag.size() - msgSearchRadius) {
-    //     for(unsigned i{index - msgSearchRadius}; i < index + msgSearchRadius; i++) {
-    //         if(i != index && (!isnan(bag.at(i).at(yawIndex))) && (bag.at(index).at(timeIndex) == bag.at(i).at(timeIndex))) {
-    //             return i;
-    //         }
-    //     }
-    // }
-    // return index;
 }
