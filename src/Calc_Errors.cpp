@@ -12,6 +12,8 @@
 #include "tf/transform_datatypes.h"
 
 unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vector<double>> &bag, unsigned lastBagIndex);
+std::string getDirName(const boost::filesystem::path &path);
+bool compareBagFiles(boost::filesystem::directory_entry first, boost::filesystem::directory_entry second);
 
 const unsigned xIndex = 0;
 const unsigned yIndex = 1;
@@ -49,7 +51,7 @@ int main(int argc, char **argv) {
 
     //Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
-        perror("Error: Expected two arguments: CSV file path, BAG folder path\n");
+        perror("Error: Expected two arguments: CSV file path, BAG directory path (path to folder containing all the bag files)\n");
         return 1;
     }
 
@@ -104,10 +106,10 @@ int main(int argc, char **argv) {
     if(boost::filesystem::is_directory(bagDirPath)) {
 
         for(const auto file : boost::filesystem::directory_iterator(bagDirPath)) {
-            bagFiles.push_back(file);
+            if(file.path().extension().string() == ".bag") bagFiles.push_back(file);
+            else std::cout << "Found a non-bag in the directory, moving on" << std::endl;
         }
-
-        std::sort(bagFiles.begin(), bagFiles.end());
+        std::sort(bagFiles.begin(), bagFiles.end(), compareBagFiles);
     } else {
         perror("Second argument must be a path to the bag directory");
     }
@@ -312,8 +314,7 @@ int main(int argc, char **argv) {
 
 
     //Write a new csv file for the errors
-    std::string bagFolderName {bagDirPath.filename().string()};
-    std::ofstream errorCSVFile(bagFolderName.append("_error.csv"));
+    std::ofstream errorCSVFile(getDirName(bagDirPath).append("_error.csv"));
 
     //Write the analysis (means and entry count)
     errorCSVFile << "ANALYSIS" << "\n";
@@ -359,7 +360,7 @@ int main(int argc, char **argv) {
     errorCSVFile.close();
 
     //Write a new csv file for the gnu plot
-    std::ofstream errorGraphCSVFile(bagFolderName.append("_error_graph_data.csv"));
+    std::ofstream errorGraphCSVFile(getDirName(bagDirPath).append("_error_graph_data.csv"));
 
     //Write the individual entries, adjusting time so it is viewable on a graph
     for (auto vec : errorVec) {
@@ -397,4 +398,20 @@ unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vec
         }
     }
     return closestIndex;
+}
+
+/**
+ * @brief Finds the directory name from a path
+ * 
+ * @param path the path on which to find the directory name
+ * @return a string containing the directory name
+ */
+std::string getDirName(const boost::filesystem::path &path) {
+    std::string fullPath {path.string()};
+    if(fullPath.at(fullPath.size() - 1) == '/') fullPath = fullPath.substr(0, fullPath.find_last_of('/'));
+    return fullPath.substr(fullPath.find_last_of('/') + 1);
+}
+
+bool compareBagFiles(boost::filesystem::directory_entry first, boost::filesystem::directory_entry second) {
+    return first.path().filename().string() < second.path().filename().string();
 }
