@@ -7,13 +7,11 @@
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 #include <boost/format.hpp>
-#include <boost/filesystem.hpp>
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_datatypes.h"
 
 unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vector<double>> &bag, unsigned lastBagIndex);
-std::string getDirName(const boost::filesystem::path &path);
-bool compareBagFiles(boost::filesystem::directory_entry first, boost::filesystem::directory_entry second);
+std::string getBagName(const std::string &full_path);
 
 const unsigned xIndex = 0;
 const unsigned yIndex = 1;
@@ -26,8 +24,8 @@ const unsigned bagMsgIndex = 3;
 
 const double zScoreSignificanceLevel = 3;
 
-const unsigned bagSearchLength = 70;
-const unsigned minMoveValue = 5;
+const unsigned maxMoveValue = 44;
+const unsigned minMoveValue = 40;
 
 const unsigned outlierAtPosition = 0;
 const unsigned outlierAtOrientation = 1;
@@ -38,20 +36,16 @@ const unsigned outlierIdentifierIndex = 1;
 
 const double rosTimeConversionFactor = pow(10, -9);
 
-const unsigned csvStartIdx = 0;
-const unsigned csvEndIdx = 6940;
-
-const unsigned bagStartIdx = 1580;
-const unsigned bagEndIdx = 91210;
-
 int main(int argc, char **argv) {
 
     std::ofstream csvPrint("csvPrint.csv");
     std::ofstream bagPrint("bagPrint.csv");
 
+    std::ofstream bagSomePrint("bagSomePrint.csv");
+
     //Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
-        perror("Error: Expected two arguments: CSV file path, BAG directory path (path to folder containing all the bag files)\n");
+        perror("Error: Expected two arguments: CSV file path, BAG file path\n");
         return 1;
     }
 
@@ -79,106 +73,102 @@ int main(int argc, char **argv) {
 
         if(file.eof()) break;
 
-        if(currentIdx >= csvStartIdx && currentIdx <= csvEndIdx) {
-            std::vector<double> instance;
-            instance.push_back(std::stod(x));
-            instance.push_back(std::stod(y));
-            instance.push_back(std::stod(yaw));
+        std::vector<double> instance;
+        instance.push_back(std::stod(x));
+        instance.push_back(std::stod(y));
+        instance.push_back(std::stod(yaw));
 
-            csvVec.push_back(instance);
+        csvVec.push_back(instance);
 
+        if(currentIdx <= 1386) 
             csvPrint << x << "," << y << "," << yaw << "," << currentIdx << "\n";
-        }
         currentIdx++;
     }
     file.close();
     csvPrint.close();
 
-    //Open the bag files from the passed-in path
-    const boost::filesystem::path bagDirPath(argv[2]);
-
-    std::vector<boost::filesystem::directory_entry> bagFiles;
-
-    if(!boost::filesystem::exists(bagDirPath)) {
-        perror("Unable to open bag directory");
-        return 1;
-    }
-    if(boost::filesystem::is_directory(bagDirPath)) {
-
-        for(const auto file : boost::filesystem::directory_iterator(bagDirPath)) {
-            if(file.path().extension().string() == ".bag") bagFiles.push_back(file);
-            else std::cout << "Found a non-bag in the directory, moving on" << std::endl;
-        }
-        std::sort(bagFiles.begin(), bagFiles.end(), compareBagFiles);
-    } else {
-        perror("Second argument must be a path to the bag directory");
-    }
+    currentIdx = 0;
 
     std::vector<std::vector<double>> bagVec;
 
-    currentIdx = 0;
+    rosbag::Bag bag;
+    bag.open(argv[2]);
 
-    for(auto &bagFile : bagFiles) {
-        rosbag::Bag bag;
-        std::cout << "\nReading " << bagFile.path().filename().string();
-        bag.open(bagFile.path().string());
+    rosbag::View viewer(bag);
+    // Copy the bag entries to the vector bagVec while converting the quaternion to a yaw measurement
+    for (const rosbag::MessageInstance msg : viewer) {
+        if(msg.getDataType() == "nav_msgs/Odometry") {
+            nav_msgs::Odometry::ConstPtr thisMsg = msg.instantiate<nav_msgs::Odometry>();
+            if (thisMsg != nullptr) {
+                tf::Quaternion quaternion;
+                quaternion.setW(thisMsg->pose.pose.orientation.w);
+                quaternion.setX(thisMsg->pose.pose.orientation.x);
+                quaternion.setY(thisMsg->pose.pose.orientation.y);
+                quaternion.setZ(thisMsg->pose.pose.orientation.z);
 
-        // Preparation for printing a loading symbol
-        std::vector<char> loading {'/','-','\\','|','/','-','\\','|'};
+                double yaw {tf::getYaw(quaternion)};
+                
+                std::vector<double> instance;
 
-        unsigned currentLoadingIdx {0};
-        std::cout << " " << loading.at(currentLoadingIdx);
+                instance.push_back(thisMsg->pose.pose.position.x);
+                instance.push_back(thisMsg->pose.pose.position.y);
+                instance.push_back(yaw);
 
-        rosbag::View viewer(bag);
-        // Copy the bag entries to the vector bagVec while converting the quaternion to a yaw measurement
-        for (const rosbag::MessageInstance msg : viewer) {
-            if(msg.getDataType() == "nav_msgs/Odometry") {
-                if(currentIdx >= bagStartIdx && currentIdx <= bagEndIdx) {
-                    nav_msgs::Odometry::ConstPtr thisMsg = msg.instantiate<nav_msgs::Odometry>();
-                    if (thisMsg != nullptr) {
-                        tf::Quaternion quaternion;
-                        quaternion.setW(thisMsg->pose.pose.orientation.w);
-                        quaternion.setX(thisMsg->pose.pose.orientation.x);
-                        quaternion.setY(thisMsg->pose.pose.orientation.y);
-                        quaternion.setZ(thisMsg->pose.pose.orientation.z);
+                bagVec.push_back(instance);
 
-                        double yaw {tf::getYaw(quaternion)};
-                        std::vector<double> instance;
-
-                        instance.push_back(thisMsg->pose.pose.position.x);
-                        instance.push_back(thisMsg->pose.pose.position.y);
-                        instance.push_back(yaw);
-
-                        bagVec.push_back(instance);
-
-                        bagPrint << thisMsg->pose.pose.position.x << "," << thisMsg->pose.pose.position.y << "," << yaw << "," << currentIdx << "\n";
-
-                        // Update the loading symbol periodically
-                        if((currentIdx % 200) == 0) {
-                            if(currentLoadingIdx + 1 > loading.size() - 1) currentLoadingIdx = 0;
-                            else currentLoadingIdx++;
-                            std::cout <<  "\b";
-                            std::cout.flush();
-                            std::cout << loading.at(currentLoadingIdx);
-                            std::cout.flush();
-                        }
-                    }
-                    else {
-                        std::cout << "Error: Could not retrieve this bag message. " << msg.getDataType() << std::endl;
-                    }
-                }
-                currentIdx++;
+                bagPrint << thisMsg->pose.pose.position.x << "," << thisMsg->pose.pose.position.y << "," << yaw << "," << currentIdx << "\n";
             }
+            else {
+                std::cout << "Error: Could not retrieve this bag message. " << msg.getDataType() << std::endl;
+            }
+            currentIdx++;
         }
-        bag.close();
-
-        // Clear the text from the loading symbol before moving on
-        std::cout << "\b" << " ";
-        std::cout.flush();
     }
+    bag.close();
     bagPrint.close();
 
-    std::cout << std::endl;
+    // Filter out entries where yaw is nan or the measurement are incorrect
+    unsigned closeThreshold {3};
+    double xMode;
+
+    double val1 {std::nan("")};
+    double val2 {std::nan("")};
+    unsigned val1Counter {0};
+    unsigned val2Counter {0};
+
+    for(int i{0}; i <= 10; i++) {
+        if(std::isnan(val1)) {
+            val1 = bagVec.at(i).at(xIndex);
+            continue;
+        }
+        if(std::isnan(val2)) {
+            val2 = bagVec.at(i).at(xIndex);
+            continue;
+        }
+        if(std::abs(bagVec.at(i).at(xIndex) - val1) < closeThreshold) val1Counter++;
+        if(std::abs(bagVec.at(i).at(xIndex) - val2) < closeThreshold) val2Counter++;
+    }
+
+    xMode = val1Counter > val2Counter ? val1 : val2;
+
+    std::cout << xMode << std::endl;
+
+    std::vector<std::vector<double>> filteredBagVec;
+
+    for(int i{0}; i < bagVec.size(); i++) {
+        if(!std::isnan(bagVec.at(i).at(yawIndex)) &&
+           std::abs(bagVec.at(i).at(xIndex) - xMode) < closeThreshold) {
+            filteredBagVec.push_back(bagVec.at(i));
+            xMode = bagVec.at(i).at(xIndex);
+        }
+    }
+
+    for(auto vec : filteredBagVec) {
+        bagSomePrint << vec.at(xIndex) << "," << vec.at(yIndex) << "," << vec.at(yawIndex) << "\n";
+    }
+
+    bagSomePrint.close();
+    return 0;
 
     double positionErrorTotal{0};
     double orientationErrorTotal{0};
@@ -186,17 +176,19 @@ int main(int argc, char **argv) {
     std::vector<std::vector<double>> errorVec;
 
     unsigned lastBagIndex {0};
+    currentIdx = 0;
 
     //Loop through csvVec and find the corresponding bag entries. Calculate the error and copy it to errorVec
     for(unsigned i{0}; i < csvVec.size(); i++) {
         if(lastBagIndex + 1 >= bagVec.size()) break;
-        unsigned bagMsgIndex{findInBag(csvVec.at(i), bagVec, lastBagIndex + 1)}; 
-        lastBagIndex = bagMsgIndex;
+        unsigned bagMsgIndex{findInBag(csvVec.at(i), bagVec, lastBagIndex + 1)};
         //Calculate position error using Euclidian distance
         double positionError{std::sqrt(pow((csvVec.at(i).at(xIndex) - bagVec.at(bagMsgIndex).at(xIndex)), 2) + 
                                        pow((csvVec.at(i).at(yIndex) - bagVec.at(bagMsgIndex).at(yIndex)), 2))};
         double orientationError{std::abs(csvVec.at(i).at(yawIndex) - bagVec.at(bagMsgIndex).at(yawIndex))};
-
+        if(currentIdx <= 1386)
+            bagSomePrint << bagVec.at(bagMsgIndex).at(xIndex) << "," << bagVec.at(bagMsgIndex).at(yIndex) << "," << bagVec.at(bagMsgIndex).at(yawIndex) << "," << currentIdx << "\n";
+        currentIdx++;
         //Correct orientation error if large error is due to radian looping
         if(orientationError > M_PI && orientationError < M_PI * 2) orientationError = (M_PI * 2) - orientationError;
 
@@ -206,13 +198,16 @@ int main(int argc, char **argv) {
         instance.push_back(positionError);
         instance.push_back(orientationError);
         instance.push_back(bagMsgIndex);
+        instance.push_back(bagMsgIndex - lastBagIndex);
 
         errorVec.push_back(instance);
 
+        lastBagIndex = bagMsgIndex;
 
         positionErrorTotal += positionError;
         orientationErrorTotal += orientationError;
     }
+    bagSomePrint.close();
 
     double positionErrorMean {positionErrorTotal / errorVec.size()};
     double orientationErrorMean {orientationErrorTotal / errorVec.size()};
@@ -276,8 +271,8 @@ int main(int argc, char **argv) {
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "INDIVIDUAL ENTRIES\n" << std::endl;
     for (auto vec : errorVec) {
-        std::cout << boost::format("Waypt Index: [%4p], Bag Index: [%5p], Position Error: [%07.5f], Orientation Error: [%07.5f]") 
-            % vec.at(wayptIndexIndex) % vec.at(3) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex)<< std::endl;
+        std::cout << boost::format("Waypt Index: [%4p], Bag Index: [%5p], Position Error: [%07.5f], Orientation Error: [%07.5f], %4p") 
+            % vec.at(wayptIndexIndex) % vec.at(3) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) % vec.at(4) << std::endl;
     }
 
     //Print the outliers
@@ -303,6 +298,7 @@ int main(int argc, char **argv) {
     std::cout << "ANALYSIS\n" << std::endl;
     std::cout << boost::format("Total Entries: %d, failed to find %d entries in the bag file\n")
         % errorVec.size() % (csvVec.size() - errorVec.size()) << std::endl;
+    std::cout << "Filtered out " << filteredBagVec.size() - bagVec.size() << " invalid entries from the original bag file\n\n";
     std::cout << boost::format("Found %d outliers\n") % outlierVec.size() << std::endl;
     std::cout << "Counting Outliers:" << std::endl;
     std::cout << boost::format("Position Error Mean: [%.5f]") % positionErrorMean << std::endl;
@@ -314,7 +310,7 @@ int main(int argc, char **argv) {
 
 
     //Write a new csv file for the errors
-    std::ofstream errorCSVFile(getDirName(bagDirPath).append("_error.csv"));
+    std::ofstream errorCSVFile(getBagName(argv[2]).append("_error.csv"));
 
     //Write the analysis (means and entry count)
     errorCSVFile << "ANALYSIS" << "\n";
@@ -360,7 +356,7 @@ int main(int argc, char **argv) {
     errorCSVFile.close();
 
     //Write a new csv file for the gnu plot
-    std::ofstream errorGraphCSVFile(getDirName(bagDirPath).append("_error_graph_data.csv"));
+    std::ofstream errorGraphCSVFile(getBagName(argv[2]).append("_error_graph_data.csv"));
 
     //Write the individual entries, adjusting time so it is viewable on a graph
     for (auto vec : errorVec) {
@@ -383,7 +379,7 @@ unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vec
     unsigned closestIndex {lastBagIndex};
     double closestDistance {std::numeric_limits<double>::max()};
 
-    unsigned endSearchIndex {lastBagIndex + bagSearchLength};
+    unsigned endSearchIndex {lastBagIndex + maxMoveValue};
     if(endSearchIndex >= bag.size() - 1) endSearchIndex = bag.size() - 1;
 
     unsigned beginSearchIndex {lastBagIndex};
@@ -406,12 +402,8 @@ unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vec
  * @param path the path on which to find the directory name
  * @return a string containing the directory name
  */
-std::string getDirName(const boost::filesystem::path &path) {
-    std::string fullPath {path.string()};
-    if(fullPath.at(fullPath.size() - 1) == '/') fullPath = fullPath.substr(0, fullPath.find_last_of('/'));
-    return fullPath.substr(fullPath.find_last_of('/') + 1);
-}
-
-bool compareBagFiles(boost::filesystem::directory_entry first, boost::filesystem::directory_entry second) {
-    return first.path().filename().string() < second.path().filename().string();
+std::string getBagName(const std::string &full_path) {
+    std::string file_name {full_path.substr(full_path.find_last_of("/") + 1)};
+    file_name = file_name.substr(0, file_name.rfind('.'));
+    return file_name;
 }
