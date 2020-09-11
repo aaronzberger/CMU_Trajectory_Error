@@ -36,38 +36,31 @@ const unsigned outlierAtBoth = 2;
 const unsigned indexInErrorVecIndex = 0;
 const unsigned outlierIdentifierIndex = 1;
 
-const double rosTimeConversionFactor = pow(10, -9);
+const unsigned bagMsgsAreCloseThreshold = 3;
 
 int main(int argc, char **argv) {
 
-    std::ofstream csvPrint("csvPrint.csv");
-    std::ofstream bagPrint("bagPrint.csv");
-
-    std::ofstream bagSomePrint("bagSomePrint.csv");
-
-    //Ensure 2 arguments were passed in, or throw an error
+    // Ensure 2 arguments were passed in, or throw an error
     if(argc != 3) {
         perror("Error: Expected two arguments: CSV file path, BAG file path\n");
         return 1;
     }
 
-    //Open the CSV file from the passed-in path
+    // Open the CSV file from the passed-in path
     std::ifstream file(argv[1]);
     if (!file.is_open()) {
         perror("Error: Could not open CSV File\n");
         return 1;
     }
 
-    //Declare holding variables for the values of each column
     std::string x, y, yaw;
 
-    //Parse out the first line, which are the titles of the columns
+    // Parse out the first line, which are the titles of the columns
     std::getline(file, x, '\n');
 
     std::vector<std::vector<double>> csvVec;
-    unsigned currentIdx {0};
 
-    //Copy the csv entries to the vector csvVec while calculating the time for each entry.
+    // Copy the csv entries to the vector csvVec
     while (file.good()) {
         std::getline(file, x, ',');
         std::getline(file, y, ',');
@@ -81,15 +74,9 @@ int main(int argc, char **argv) {
         instance.push_back(std::stod(yaw));
 
         csvVec.push_back(instance);
-
-        if(currentIdx <= 1386) 
-            csvPrint << x << "," << y << "," << yaw << "," << currentIdx << "\n";
-        currentIdx++;
     }
     file.close();
-    csvPrint.close();
 
-    currentIdx = 0;
 
     std::vector<std::vector<double>> bagVec;
 
@@ -117,20 +104,19 @@ int main(int argc, char **argv) {
                 instance.push_back(yaw);
 
                 bagVec.push_back(instance);
-
-                bagPrint << thisMsg->pose.pose.position.x << "," << thisMsg->pose.pose.position.y << "," << yaw << "," << currentIdx << "\n";
             }
             else {
-                std::cout << "Error: Could not retrieve this bag message. " << msg.getDataType() << std::endl;
+                std::cout << "Error: Could not retrieve this bag message of type " << msg.getDataType() << std::endl;
             }
-            currentIdx++;
         }
     }
     bag.close();
-    bagPrint.close();
 
-    // Filter out entries where yaw is nan or the measurement are incorrect
-    unsigned closeThreshold {3};
+
+    // Filter out entries where yaw is nan or the measurements are incorrect
+    // Procedure: find the mode x value from the last 10 entries; eliminate new entries that aren't close to that mode
+    std::vector<std::vector<double>> filteredBagVec;
+
     double xMode;
 
     double val1 {std::nan("")};
@@ -138,6 +124,7 @@ int main(int argc, char **argv) {
     unsigned val1Counter {0};
     unsigned val2Counter {0};
 
+    // Find the x mode for the first 10 values
     for(int i{0}; i <= 10; i++) {
         if(std::isnan(val1)) {
             val1 = bagVec.at(i).at(xIndex);
@@ -147,51 +134,40 @@ int main(int argc, char **argv) {
             val2 = bagVec.at(i).at(xIndex);
             continue;
         }
-        if(std::abs(bagVec.at(i).at(xIndex) - val1) < closeThreshold) val1Counter++;
-        if(std::abs(bagVec.at(i).at(xIndex) - val2) < closeThreshold) val2Counter++;
+        if(std::abs(bagVec.at(i).at(xIndex) - val1) < bagMsgsAreCloseThreshold) val1Counter++;
+        if(std::abs(bagVec.at(i).at(xIndex) - val2) < bagMsgsAreCloseThreshold) val2Counter++;
     }
 
     xMode = val1Counter > val2Counter ? val1 : val2;
 
-    std::cout << xMode << std::endl;
-
-    std::vector<std::vector<double>> filteredBagVec;
-
+    // Filter out all the invalid entries
     for(int i{0}; i < bagVec.size(); i++) {
         if(!std::isnan(bagVec.at(i).at(yawIndex)) &&
-           std::abs(bagVec.at(i).at(xIndex) - xMode) < closeThreshold) {
+           std::abs(bagVec.at(i).at(xIndex) - xMode) < bagMsgsAreCloseThreshold) {
             filteredBagVec.push_back(bagVec.at(i));
             xMode = bagVec.at(i).at(xIndex);
         }
     }
 
-    currentIdx = 0;
 
-    for(auto vec : filteredBagVec) {
-        bagSomePrint << vec.at(xIndex) << "," << vec.at(yIndex) << "," << vec.at(yawIndex) << "," << currentIdx++ << "\n";
-    }
+    // Find the error for each waypoint
+    // Procedure: Find the bag message with the least error for each waypoint, eliminating flat sections where the robot was stopped
 
-    bagSomePrint.close();
-
-    double positionErrorTotal{0};
-    double orientationErrorTotal{0};
-
-    currentIdx = 0;
-
-    // Create a hash map that maps the index in the csv file to a vector containing the errors
+    // Use a hash map that maps the waypoint index to a vector containing the errors
     std::unordered_map<unsigned, std::vector<double>> closestDistances;
 
-    // Loop through bagVec and find the corresponding CSV entries
+    // Loop through bagVec and find the corresponding waypoints
     for(unsigned i{0}; i < filteredBagVec.size(); i++) {
         unsigned predictedLocation {i / (filteredBagVec.size() / csvVec.size())};
-        // if(lastCsvMsgIndex + 1 >= filteredBagVec.size()) break;
+
         unsigned csvMsgIndex{findClosestWaypt(filteredBagVec.at(i), csvVec, predictedLocation)};
-        //Calculate position error using Euclidian distance
+
+        // Calculate position error using Euclidian distance
         double positionError{std::sqrt(pow((filteredBagVec.at(i).at(xIndex) - csvVec.at(csvMsgIndex).at(xIndex)), 2) + 
                                        pow((filteredBagVec.at(i).at(yIndex) - csvVec.at(csvMsgIndex).at(yIndex)), 2))};
         double orientationError{std::abs(filteredBagVec.at(i).at(yawIndex) - csvVec.at(csvMsgIndex).at(yawIndex))};
-        currentIdx++;
-        //Correct orientation error if large error is due to radian looping
+
+        // Correct orientation error if large error is due to radian looping
         if(orientationError > M_PI && orientationError < M_PI * 2) orientationError = (M_PI * 2) - orientationError;
 
         std::vector<double> instance;
@@ -201,6 +177,7 @@ int main(int argc, char **argv) {
         instance.push_back(orientationError);
         instance.push_back(csvMsgIndex);
 
+        // Decide whether to use this entry (if it has the least error for the found waypoint)
         if(closestDistances.count(csvMsgIndex) == 0) {
             closestDistances.insert({csvMsgIndex, instance});
         } else {
@@ -212,8 +189,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Copy the contents of the hash map to the vector containing the errors, sorted by waypoint message index
+
+    // Copy the contents of the hash map to a vector containing the errors, sorted by waypoint message index
     std::vector<std::vector<double>> errorVec;
+
+    double positionErrorTotal{0};
+    double orientationErrorTotal{0};
 
     for(int i{0}; i < csvVec.size(); i++) {
         if(closestDistances.count(i) == 1) {
@@ -224,6 +205,8 @@ int main(int argc, char **argv) {
         }
     }
 
+
+    // Do pre-calculations for finding outliers
     double positionErrorMean {positionErrorTotal / errorVec.size()};
     double orientationErrorMean {orientationErrorTotal / errorVec.size()};
  
@@ -249,7 +232,7 @@ int main(int argc, char **argv) {
     double orientationErrorMeanOutliers {0};
     int orientationErrorMeanCount {0};
 
-    //Loop through errorVec and find outlier entries. Store those entries in outlierVec
+    //Loop through errorVec and find outlier entries. Store those entries in a vector (outlierVec)
     for(int i {0}; i < errorVec.size(); i++) {
         double positionErrorZScore {(errorVec.at(i).at(positionErrorIndex) - positionErrorMean) / positionErrorSD};
         double orientationErrorZScore {(errorVec.at(i).at(orientationErrorIndex) - orientationErrorMean) / orientationErrorSD};
@@ -280,9 +263,8 @@ int main(int argc, char **argv) {
     positionErrorMeanOutliers /= positionErrorMeanCount;
     orientationErrorMeanOutliers /= orientationErrorMeanCount;
 
-    //Print data
-
-    //Print the individual error entries
+    // Print all the results
+    // Print the individual error entries
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "INDIVIDUAL ENTRIES\n" << std::endl;
     for (auto vec : errorVec) {
@@ -290,7 +272,7 @@ int main(int argc, char **argv) {
             % vec.at(0) % vec.at(3) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
 
-    //Print the outliers
+    // Print the outliers
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "OUTLIERS\n" << std::endl;
 
@@ -308,7 +290,7 @@ int main(int argc, char **argv) {
         std::cout << std::endl;
     }
 
-    //Print the entry count and the means for position and orientation
+    // Print the analysis (entry count and the means for position and orientation)
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "ANALYSIS\n" << std::endl;
     std::cout << boost::format("Total Entries: %d\n")
@@ -324,10 +306,10 @@ int main(int argc, char **argv) {
     std::cout << boost::format("Orientation Error Mean: [%.5f]\n") % orientationErrorMeanOutliers << std::endl;
 
 
-    //Write a new csv file for the errors
+    // Write a new csv file for the errors
     std::ofstream errorCSVFile(getBagName(argv[2]).append("_error.csv"));
 
-    //Write the analysis (means and entry count)
+    // Write the analysis (means and entry count)
     errorCSVFile << "ANALYSIS" << "\n";
 
     errorCSVFile << "Total Entries," << errorVec.size() << "\n";
@@ -341,7 +323,7 @@ int main(int argc, char **argv) {
     errorCSVFile << boost::format("Position Error Mean,%-.7f") % positionErrorMeanOutliers << "\n";
     errorCSVFile << boost::format("Orientation Error Mean,%-.7f") % orientationErrorMeanOutliers << "\n\n\n";
 
-    //Write the outliers
+    // Write the outliers
     errorCSVFile << "OUTLIERS" << "\n";
     errorCSVFile << "Bag Index, Waypt Index, Position Error, Orientation Error" << "\n";
 
@@ -356,24 +338,22 @@ int main(int argc, char **argv) {
         errorCSVFile << "\n";
     }
 
-    //Write the column headers
+    // Write column headers
     errorCSVFile << "\n\nINDIVIDUAL ENTRIES\n";
     errorCSVFile << "Bag Index, Waypt Index, Position Error, Orientation Error" << "\n";
 
-    //Write the individual entries
+    // Write the individual entries
     for (auto vec : errorVec) {
         errorCSVFile << boost::format("%4p,%5p,%-.5f,%-.5f") 
             % vec.at(bagMsgIndexIndex) % vec.at(wayptMsgIndexIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
-    errorCSVFile << "\n\n";
-
-
     errorCSVFile.close();
 
-    //Write a new csv file for the gnu plot
+
+    // Write a new csv file for graphing
     std::ofstream errorGraphCSVFile(getBagName(argv[2]).append("_error_graph_data.csv"));
 
-    //Write the individual entries, adjusting time so it is viewable on a graph
+    // Write the individual entries, using the waypoint index as the time stamp
     for (auto vec : errorVec) {
         errorGraphCSVFile << boost::format("%4p,%.5f,%.5f") 
             % vec.at(wayptMsgIndexIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
