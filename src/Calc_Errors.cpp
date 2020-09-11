@@ -4,28 +4,30 @@
 #include <fstream>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 #include <boost/format.hpp>
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_datatypes.h"
 
-unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vector<double>> &bag, unsigned lastBagIndex);
+unsigned findClosestWaypt(const std::vector<double> &bagMsg, const std::vector<std::vector<double>> &csvVec, unsigned predictedLocation);
 std::string getBagName(const std::string &full_path);
 
+// Indexes for input file
 const unsigned xIndex = 0;
 const unsigned yIndex = 1;
 const unsigned yawIndex = 2;
 
-const unsigned wayptIndexIndex = 0;
+// Indexes for error vector
+const unsigned bagMsgIndexIndex = 0;
 const unsigned positionErrorIndex = 1;
 const unsigned orientationErrorIndex = 2;
-const unsigned bagMsgIndex = 3;
+const unsigned wayptMsgIndexIndex = 3;
 
 const double zScoreSignificanceLevel = 3;
 
-const unsigned maxMoveValue = 44;
-const unsigned minMoveValue = 40;
+const unsigned wayptSearchRadius = 70;
 
 const unsigned outlierAtPosition = 0;
 const unsigned outlierAtOrientation = 1;
@@ -163,31 +165,31 @@ int main(int argc, char **argv) {
         }
     }
 
+    currentIdx = 0;
+
     for(auto vec : filteredBagVec) {
-        bagSomePrint << vec.at(xIndex) << "," << vec.at(yIndex) << "," << vec.at(yawIndex) << "\n";
+        bagSomePrint << vec.at(xIndex) << "," << vec.at(yIndex) << "," << vec.at(yawIndex) << "," << currentIdx++ << "\n";
     }
 
     bagSomePrint.close();
-    return 0;
 
     double positionErrorTotal{0};
     double orientationErrorTotal{0};
 
-    std::vector<std::vector<double>> errorVec;
-
-    unsigned lastBagIndex {0};
     currentIdx = 0;
 
-    //Loop through csvVec and find the corresponding bag entries. Calculate the error and copy it to errorVec
-    for(unsigned i{0}; i < csvVec.size(); i++) {
-        if(lastBagIndex + 1 >= bagVec.size()) break;
-        unsigned bagMsgIndex{findInBag(csvVec.at(i), bagVec, lastBagIndex + 1)};
+    // Create a hash map that maps the index in the csv file to a vector containing the errors
+    std::unordered_map<unsigned, std::vector<double>> closestDistances;
+
+    // Loop through bagVec and find the corresponding CSV entries
+    for(unsigned i{0}; i < filteredBagVec.size(); i++) {
+        unsigned predictedLocation {i / (filteredBagVec.size() / csvVec.size())};
+        // if(lastCsvMsgIndex + 1 >= filteredBagVec.size()) break;
+        unsigned csvMsgIndex{findClosestWaypt(filteredBagVec.at(i), csvVec, predictedLocation)};
         //Calculate position error using Euclidian distance
-        double positionError{std::sqrt(pow((csvVec.at(i).at(xIndex) - bagVec.at(bagMsgIndex).at(xIndex)), 2) + 
-                                       pow((csvVec.at(i).at(yIndex) - bagVec.at(bagMsgIndex).at(yIndex)), 2))};
-        double orientationError{std::abs(csvVec.at(i).at(yawIndex) - bagVec.at(bagMsgIndex).at(yawIndex))};
-        if(currentIdx <= 1386)
-            bagSomePrint << bagVec.at(bagMsgIndex).at(xIndex) << "," << bagVec.at(bagMsgIndex).at(yIndex) << "," << bagVec.at(bagMsgIndex).at(yawIndex) << "," << currentIdx << "\n";
+        double positionError{std::sqrt(pow((filteredBagVec.at(i).at(xIndex) - csvVec.at(csvMsgIndex).at(xIndex)), 2) + 
+                                       pow((filteredBagVec.at(i).at(yIndex) - csvVec.at(csvMsgIndex).at(yIndex)), 2))};
+        double orientationError{std::abs(filteredBagVec.at(i).at(yawIndex) - csvVec.at(csvMsgIndex).at(yawIndex))};
         currentIdx++;
         //Correct orientation error if large error is due to radian looping
         if(orientationError > M_PI && orientationError < M_PI * 2) orientationError = (M_PI * 2) - orientationError;
@@ -197,17 +199,30 @@ int main(int argc, char **argv) {
         instance.push_back(i);
         instance.push_back(positionError);
         instance.push_back(orientationError);
-        instance.push_back(bagMsgIndex);
-        instance.push_back(bagMsgIndex - lastBagIndex);
+        instance.push_back(csvMsgIndex);
 
-        errorVec.push_back(instance);
-
-        lastBagIndex = bagMsgIndex;
-
-        positionErrorTotal += positionError;
-        orientationErrorTotal += orientationError;
+        if(closestDistances.count(csvMsgIndex) == 0) {
+            closestDistances.insert({csvMsgIndex, instance});
+        } else {
+            std::unordered_map<unsigned, std::vector<double>>::const_iterator element = closestDistances.find(csvMsgIndex);
+            if(positionError < element->second.at(positionErrorIndex)) {
+                closestDistances.erase(csvMsgIndex);
+                closestDistances.insert({csvMsgIndex, instance});
+            }
+        }
     }
-    bagSomePrint.close();
+
+    // Copy the contents of the hash map to the vector containing the errors, sorted by waypoint message index
+    std::vector<std::vector<double>> errorVec;
+
+    for(int i{0}; i < csvVec.size(); i++) {
+        if(closestDistances.count(i) == 1) {
+            std::unordered_map<unsigned, std::vector<double>>::const_iterator element = closestDistances.find(i);
+            errorVec.push_back(element->second);
+            positionErrorTotal += element->second.at(positionErrorIndex);
+            orientationErrorTotal += element->second.at(orientationErrorIndex);
+        }
+    }
 
     double positionErrorMean {positionErrorTotal / errorVec.size()};
     double orientationErrorMean {orientationErrorTotal / errorVec.size()};
@@ -271,8 +286,8 @@ int main(int argc, char **argv) {
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "INDIVIDUAL ENTRIES\n" << std::endl;
     for (auto vec : errorVec) {
-        std::cout << boost::format("Waypt Index: [%4p], Bag Index: [%5p], Position Error: [%07.5f], Orientation Error: [%07.5f], %4p") 
-            % vec.at(wayptIndexIndex) % vec.at(3) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) % vec.at(4) << std::endl;
+        std::cout << boost::format("Bag Index: [%5p], Waypt Index: [%4p], Position Error: [%07.5f], Orientation Error: [%07.5f]") 
+            % vec.at(0) % vec.at(3) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
 
     //Print the outliers
@@ -280,7 +295,7 @@ int main(int argc, char **argv) {
     std::cout << "OUTLIERS\n" << std::endl;
 
     for(auto vec: outlierVec) {
-        std::cout << boost::format("Waypt Index: [%4p], ") % errorVec.at(vec.at(0)).at(wayptIndexIndex);
+        std::cout << boost::format("Bag Index: [%4p], ") % errorVec.at(vec.at(0)).at(bagMsgIndexIndex);
         if(vec.at(outlierIdentifierIndex) == outlierAtPosition || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
             std::cout << boost::format("Position Error: [%07.5f]") % errorVec.at(vec.at(indexInErrorVecIndex)).at(positionErrorIndex);
         }
@@ -296,9 +311,9 @@ int main(int argc, char **argv) {
     //Print the entry count and the means for position and orientation
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "ANALYSIS\n" << std::endl;
-    std::cout << boost::format("Total Entries: %d, failed to find %d entries in the bag file\n")
-        % errorVec.size() % (csvVec.size() - errorVec.size()) << std::endl;
-    std::cout << "Filtered out " << filteredBagVec.size() - bagVec.size() << " invalid entries from the original bag file\n\n";
+    std::cout << boost::format("Total Entries: %d\n")
+        % errorVec.size() << std::endl;
+    std::cout << "Filtered out " << bagVec.size() - filteredBagVec.size() << " invalid entries from the original bag file (out of " << bagVec.size() << " total entries)\n\n";
     std::cout << boost::format("Found %d outliers\n") % outlierVec.size() << std::endl;
     std::cout << "Counting Outliers:" << std::endl;
     std::cout << boost::format("Position Error Mean: [%.5f]") % positionErrorMean << std::endl;
@@ -328,10 +343,10 @@ int main(int argc, char **argv) {
 
     //Write the outliers
     errorCSVFile << "OUTLIERS" << "\n";
-    errorCSVFile << "Waypt Index, Bag Index, Position Error, Orientation Error" << "\n";
+    errorCSVFile << "Bag Index, Waypt Index, Position Error, Orientation Error" << "\n";
 
     for(auto vec: outlierVec) {
-        errorCSVFile << boost::format("%4p, %5p,") % errorVec.at(vec.at(0)).at(wayptIndexIndex) % errorVec.at(vec.at(0)).at(bagMsgIndex);
+        errorCSVFile << boost::format("%4p, %5p,") % errorVec.at(vec.at(0)).at(bagMsgIndexIndex) % errorVec.at(vec.at(0)).at(wayptMsgIndexIndex);
         if(vec.at(outlierIdentifierIndex) == outlierAtPosition || vec.at(outlierIdentifierIndex) == outlierAtBoth) {
             errorCSVFile << boost::format("%-.5f") % errorVec.at(vec.at(indexInErrorVecIndex)).at(positionErrorIndex);
         }
@@ -343,12 +358,12 @@ int main(int argc, char **argv) {
 
     //Write the column headers
     errorCSVFile << "\n\nINDIVIDUAL ENTRIES\n";
-    errorCSVFile << "Waypt Index, Bag Index, Position Error, Orientation Error" << "\n";
+    errorCSVFile << "Bag Index, Waypt Index, Position Error, Orientation Error" << "\n";
 
     //Write the individual entries
     for (auto vec : errorVec) {
         errorCSVFile << boost::format("%4p,%5p,%-.5f,%-.5f") 
-            % vec.at(wayptIndexIndex) % vec.at(bagMsgIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
+            % vec.at(bagMsgIndexIndex) % vec.at(wayptMsgIndexIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
     errorCSVFile << "\n\n";
 
@@ -361,36 +376,37 @@ int main(int argc, char **argv) {
     //Write the individual entries, adjusting time so it is viewable on a graph
     for (auto vec : errorVec) {
         errorGraphCSVFile << boost::format("%4p,%.5f,%.5f") 
-            % vec.at(wayptIndexIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
+            % vec.at(wayptMsgIndexIndex) % vec.at(positionErrorIndex) % vec.at(orientationErrorIndex) << std::endl;
     }
 
     return 0;
 }
 
 /**
- * @brief Gets the index of the message in the bag that has the given time stamp
+ * @brief Gets the index of the waypoint that is closest to the given bag entry, within a radius around the predicted location
  * 
- * @param vec the bag vector in which to look for the time stamp
- * @param val the time stamp to look for
- * @return the index of the message with that time stamp
- * @throw std::out_of_range if bagVec was not created properly or columns are missing
+ * @param bagMsg the message from the bag file
+ * @param csvVec a vector containing all the waypoints
+ * @param predictedLocation a predicted location of the waypoint
+ * @return the index of the waypoint closest to the bag message
+ * @throw std::out_of_range if csvVec was not created properly or columns are missing
  */
-unsigned findInBag(const std::vector<double> &csvMsg, const std::vector<std::vector<double>> &bag, unsigned lastBagIndex) {
-    unsigned closestIndex {lastBagIndex};
+unsigned findClosestWaypt(const std::vector<double> &bagMsg, const std::vector<std::vector<double>> &csvVec, unsigned predictedLocation) {
+    unsigned closestIndex {0};
     double closestDistance {std::numeric_limits<double>::max()};
 
-    unsigned endSearchIndex {lastBagIndex + maxMoveValue};
-    if(endSearchIndex >= bag.size() - 1) endSearchIndex = bag.size() - 1;
+    unsigned startLocation {0};
+    if(static_cast<int>(predictedLocation) - wayptSearchRadius > 0) startLocation = predictedLocation - wayptSearchRadius;
 
-    unsigned beginSearchIndex {lastBagIndex};
-    if(!(beginSearchIndex < minMoveValue)) beginSearchIndex += minMoveValue;
+    unsigned endLocation{csvVec.size() - 1};
+    if(static_cast<int>(predictedLocation) + wayptSearchRadius < csvVec.size() - 1) endLocation = predictedLocation + wayptSearchRadius;
 
-    for(unsigned i{beginSearchIndex}; i <= endSearchIndex; i++) {
-        double distance {std::sqrt(pow((csvMsg.at(xIndex) - bag.at(i).at(xIndex)), 2) + 
-                                   pow((csvMsg.at(yIndex) - bag.at(i).at(yIndex)), 2))};
-        if(distance < closestDistance && !std::isnan(bag.at(i).at(yawIndex))) {
-            closestDistance = distance;
+    for(unsigned i{startLocation}; i <= endLocation; i++) {
+        double distance {std::sqrt(pow((bagMsg.at(xIndex) - csvVec.at(i).at(xIndex)), 2) + 
+                                   pow((bagMsg.at(yIndex) - csvVec.at(i).at(yIndex)), 2))};
+        if(distance < closestDistance) {
             closestIndex = i;
+            closestDistance = distance;
         }
     }
     return closestIndex;
