@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <unordered_map>
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
@@ -12,7 +13,7 @@
 #include "tf/transform_datatypes.h"
 
 unsigned findClosestWaypt(const std::vector<double> &bagMsg, const std::vector<std::vector<double>> &csvVec, unsigned predictedLocation);
-std::string getBagName(const std::string &full_path);
+std::string getFileName(const std::string &full_path);
 
 // Indexes for input file
 const unsigned xIndex = 0;
@@ -38,13 +39,19 @@ const unsigned outlierIdentifierIndex = 1;
 
 const unsigned bagMsgsAreCloseThreshold = 3;
 
+bool calculateStoppingPoints;
+
+const std::vector<unsigned> stoppingBagIndexes {2480, 3615, 4905, 6780, 9080, 10825, 12040, 13735, 15405, 16865, 18060, 19295, 21410, 23935, 25920, 27435, 28860, 30095, 31265, 32830};
+
 int main(int argc, char **argv) {
 
     // Ensure 2 arguments were passed in, or throw an error
-    if(argc != 3) {
-        perror("Error: Expected two arguments: CSV file path, BAG file path\n");
+    if(argc != 3 && argc != 4) {
+        perror("Error: Expected two or three arguments: CSV file path, BAG file path, and an optional stopping points file path\n");
         return 1;
     }
+
+    if(argc == 4) calculateStoppingPoints = true;
 
     // Open the CSV file from the passed-in path
     std::ifstream file(argv[1]);
@@ -263,6 +270,60 @@ int main(int argc, char **argv) {
     positionErrorMeanOutliers /= positionErrorMeanCount;
     orientationErrorMeanOutliers /= orientationErrorMeanCount;
 
+    double rmse;
+
+    // Calculate statistics for the stopping points, if desired
+    if(calculateStoppingPoints) {
+        // Open the CSV file from the passed-in path
+        std::ifstream stoppingPtsFile(argv[3]);
+        if (!stoppingPtsFile.is_open()) {
+            perror("Error: Could not open Stopping Points File\n");
+            return 1;
+        }
+
+        std::string x, y;
+
+        // Parse out the first line, which are the titles of the columns
+        std::getline(stoppingPtsFile, x, '\n');
+
+        std::vector<std::vector<double>> stoppingPointsVec;
+
+        // Copy the entries to the vector stoppingPointsVec
+        while (stoppingPtsFile.good()) {
+            std::getline(stoppingPtsFile, x, ',');
+            std::getline(stoppingPtsFile, y, '\n');
+
+            if(stoppingPtsFile.eof()) break;
+
+            std::vector<double> instance;
+            instance.push_back(std::stod(x));
+            instance.push_back(std::stod(y));
+
+            stoppingPointsVec.push_back(instance);
+        }
+        stoppingPtsFile.close();
+
+        std::vector<double> residuals;
+
+        for(int i{0}; i < stoppingBagIndexes.size(); i++) {
+            residuals.push_back(pow((filteredBagVec.at(stoppingBagIndexes.at(i)).at(xIndex) - stoppingPointsVec.at(i).at(xIndex)), 2) + 
+                                pow((filteredBagVec.at(stoppingBagIndexes.at(i)).at(yIndex) - stoppingPointsVec.at(i).at(yIndex)), 2));    
+        }
+        rmse = std::sqrt(std::accumulate(residuals.begin(), residuals.end(), 0.0) / residuals.size());
+
+        std::ofstream stoppingPtsOutput(getFileName(argv[3]).append("_results.csv"));
+
+        unsigned pointNumber {1};
+        stoppingPtsOutput << "Stopping Point" << "," << "Distance Error" << "\n";
+        for(auto resid : residuals) {
+            stoppingPtsOutput << pointNumber++ << "," << std::sqrt(resid) << "\n";
+        }
+        stoppingPtsOutput << "\n";
+
+        stoppingPtsOutput << "RMSE," << rmse << std::endl;
+        stoppingPtsOutput.close();
+    }
+
     // Print all the results
     // Print the individual error entries
     std::cout << "---------------------------------------------------------------------------------------------------" << std::endl;
@@ -307,7 +368,7 @@ int main(int argc, char **argv) {
 
 
     // Write a new csv file for the errors
-    std::ofstream errorCSVFile(getBagName(argv[2]).append("_error.csv"));
+    std::ofstream errorCSVFile(getFileName(argv[2]).append("_error.csv"));
 
     // Write the analysis (means and entry count)
     errorCSVFile << "ANALYSIS" << "\n";
@@ -351,7 +412,7 @@ int main(int argc, char **argv) {
 
 
     // Write a new csv file for graphing
-    std::ofstream errorGraphCSVFile(getBagName(argv[2]).append("_error_graph_data.csv"));
+    std::ofstream errorGraphCSVFile(getFileName(argv[2]).append("_error_graph_data.csv"));
 
     // Write the individual entries, using the waypoint index as the time stamp
     for (auto vec : errorVec) {
@@ -398,7 +459,7 @@ unsigned findClosestWaypt(const std::vector<double> &bagMsg, const std::vector<s
  * @param path the path on which to find the directory name
  * @return a string containing the directory name
  */
-std::string getBagName(const std::string &full_path) {
+std::string getFileName(const std::string &full_path) {
     std::string file_name {full_path.substr(full_path.find_last_of("/") + 1)};
     file_name = file_name.substr(0, file_name.rfind('.'));
     return file_name;
